@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ふーっと、しゃぼん</title>
+<meta name="description" content="マイクに息を吹いてシャボン玉をふくらませる。膜の色が黒くなる前に、吹くのをやめて空へ放す。">
+<style>
+:root { --bg: #eaf4fb; --fg: #17324a; --muted: #5a7389; --surface: #ffffff; --line: #c9dbe8; --accent: #1f6fd1; --accent-fg: #fff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0e1a26; --fg: #e4eef7; --muted: #94aabd; --surface: #172636; --line: #29405a; --accent: #6aa8ff; --accent-fg: #0e1a26; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #0e1a26; --fg: #e4eef7; --muted: #94aabd; --surface: #172636; --line: #29405a; --accent: #6aa8ff; --accent-fg: #0e1a26; color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hud { position: fixed; left: 0; right: 0; top: 0; padding: 12px 16px; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+.hud h1 { margin: 0; font-size: 20px; color: #17324a; }
+.hud .size { text-align: right; color: #17324a; }
+.hud .size b { font-size: 28px; display: block; line-height: 1.1; }
+.panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100% - 32px)); background: var(--surface); color: var(--fg);
+  border: 2px solid var(--fg); border-radius: 18px; padding: 22px 20px; display: flex; flex-direction: column; gap: 12px; text-align: center; box-shadow: 5px 5px 0 var(--fg); max-height: calc(100% - 32px); overflow: auto; }
+.panel h2 { margin: 0; font-size: 26px; }
+.panel p { margin: 0; }
+.lead { color: var(--muted); font-size: 15px; }
+.btn { border: 2px solid var(--fg); background: var(--surface); color: var(--fg); font: inherit; font-weight: 700; border-radius: 12px; padding: 13px 14px; cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-size: 18px; }
+.btn.dark { background: var(--fg); color: var(--bg); }
+.row { display: flex; gap: 8px; }
+.row .btn { flex: 1; }
+.small { font-size: 13px; color: var(--muted); }
+.big { font-size: 40px; font-weight: 800; line-height: 1.1; }
+.sens { display: flex; gap: 6px; justify-content: center; align-items: center; font-size: 14px; }
+.sens button { border: 2px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 4px 10px; font: inherit; cursor: pointer; }
+.sens button[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.tip { position: fixed; left: 0; right: 0; bottom: 18px; text-align: center; font-weight: 700; color: #17324a; pointer-events: none; padding: 0 16px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div class="hud"><h1>ふーっと、しゃぼん</h1><div class="size" id="sizeBox" hidden><b id="sizeNum"></b><span id="sizeCmp"></span></div></div>
+<div class="tip" id="tip" hidden></div>
+
+<div class="panel" id="intro">
+  <h2>ふーっと、しゃぼん</h2>
+  <p class="lead">マイクに息を吹きかけて、シャボン玉をふくらませる。<br>強すぎると割れる。弱すぎるとふくらまない。<br>膜がうすくなると色が変わり、黒くなったら割れる寸前。<br><b>吹くのをやめると、玉は空へ飛んでいく。</b></p>
+  <button class="btn primary" id="useMic">マイクで吹く</button>
+  <button class="btn" id="useTouch">指で吹く（長押し・上にずらすほど強い）</button>
+  <p class="small">マイクの音は端末の中で強さを測るだけで、どこにも送りません。Xのアプリ内ブラウザではマイクが使えないことがあります。</p>
+</div>
+
+<div class="panel" id="ready" hidden>
+  <h2 id="readyTitle">吹いてみよう</h2>
+  <p class="lead" id="readyText"></p>
+  <div class="sens" id="sensBox"><span>マイク感度</span><button data-s="0">低</button><button data-s="1" aria-pressed="true">中</button><button data-s="2">高</button></div>
+  <button class="btn primary" id="go">はじめる</button>
+</div>
+
+<div class="panel" id="result" hidden>
+  <p class="small" id="rMode"></p>
+  <div class="big" id="rSize"></div>
+  <p id="rCmp" style="font-weight:700"></p>
+  <p class="lead" id="rNote"></p>
+  <div class="row"><button class="btn dark" id="share">結果をXに投稿</button><button class="btn primary" id="again">もう一回</button></div>
+  <p class="small" id="rBest"></p>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize() { DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0); }
+addEventListener("resize", resize); resize();
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// real-world sizes to compare with (metres, the thing's height or length)
+const LADDER = [
+  [0.015, "ビー玉"], [0.04, "ピンポン玉"], [0.08, "みかん"], [0.22, "サッカーボール"], [0.5, "ビーチボール"], [1.1, "5歳の子ども"],
+  [1.7, "大人"], [3.4, "軽トラック"], [12, "路線バス"], [25, "学校のプール"], [60, "ジャンボジェット"], [105, "サッカーコート"],
+  [333, "東京タワー"], [634, "東京スカイツリー"], [828, "ブルジュ・ハリファ"], [3776, "富士山"], [8849, "エベレスト"],
+];
+function fmtLen(m) {
+  if (m < 0.01) return (m * 1000).toFixed(1) + " mm";
+  if (m < 1) return (m * 100).toFixed(m < 0.1 ? 1 : 0) + " cm";
+  if (m < 1000) return m.toFixed(m < 10 ? 2 : m < 100 ? 1 : 0) + " m";
+  return (m / 1000).toFixed(2) + " km";
+}
+function compare(d) {
+  let past = null, next = null;
+  for (const l of LADDER) { if (d >= l[0]) past = l; else { next = l; break; } }
+  return { past, next };
+}
+
+// ---------- thin-film colour ----------
+// Reflected colour of a soap film of thickness d (nm), n = 1.33, normal incidence.
+function filmColor(d) {
+  const n = 1.33, ls = [650, 540, 460];
+  const c = ls.map((l) => { const v = Math.sin(2 * Math.PI * n * d / l); return v * v; });
+  const wash = clamp((d - 700) / 1400, 0, 0.8); // thick films look whitish
+  return c.map((v) => Math.round(lerp(v * 235 + 10, 215, wash)));
+}
+
+// ---------- input ----------
+let mode = "touch"; // mic | touch
+let analyser = null, buf = null, floor = 0.004, sensIdx = 1;
+const SENS = [0.12, 0.07, 0.035];
+let strength = 0, touchY = null;
+async function enableMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(stream);
+  analyser = ac.createAnalyser(); analyser.fftSize = 1024;
+  src.connect(analyser);
+  buf = new Float32Array(analyser.fftSize);
+  // measure the room for half a second
+  let sum = 0, n = 0; const t0 = performance.now();
+  await new Promise((res) => { (function m() { analyser.getFloatTimeDomainData(buf); sum += rms(); n++; performance.now() - t0 < 500 ? requestAnimationFrame(m) : res(); })(); });
+  floor = Math.max(0.002, sum / n);
+}
+function rms() { let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; return Math.sqrt(s / buf.length); }
+function readStrength(dt) {
+  let raw = 0;
+  if (mode === "mic" && analyser) { analyser.getFloatTimeDomainData(buf); raw = clamp((rms() - floor * 1.6) / SENS[sensIdx], 0, 1.4); }
+  else if (touchY !== null) raw = clamp(1.15 - touchY / H * 1.25, 0.08, 1.2);
+  // fast attack, slower release, like a real breath
+  const k = raw > strength ? 1 - Math.exp(-dt / 0.06) : 1 - Math.exp(-dt / 0.18);
+  strength += (raw - strength) * k;
+  return strength;
+}
+cv.addEventListener("pointerdown", (e) => { touchY = e.clientY; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => { if (touchY !== null) touchY = e.clientY; });
+const up = () => { touchY = null; };
+cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+
+// ---------- game ----------
+let state = "intro"; // intro | ready | blow | fly | pop | result
+let r = 0.01, film = 1, strain = 0, t = 0, started = false, quiet = 0, endT = 0, peakR = 0;
+let shards = [], flyY = 0, popMsg = "";
+let camScale = 1; // pixels per metre (smoothed)
+const START_R = 0.012;
+
+function band() {
+  // the comfortable breath gets narrower as the bubble grows, and drifts like a breeze
+  const g = clamp(Math.log(r / START_R) / Math.log(60000), 0, 1);
+  const w = lerp(0.24, 0.075, g);
+  const c = 0.5 + Math.sin(t * 0.8) * 0.16 * g + Math.sin(t * 2.1) * 0.04 * g;
+  return { lo: c - w, hi: c + w, c, w };
+}
+function reset() {
+  popMsg = ""; r = START_R; film = 1; strain = 0; t = 0; started = false; quiet = 0; shards = []; flyY = 0; peakR = r;
+  camScale = Math.min(W, H) * 0.18 / r;
+}
+function startBlow() { reset(); state = "blow"; $("ready").hidden = true; $("sizeBox").hidden = false; tipShow(); }
+function tipShow() {
+  $("tip").hidden = false;
+  $("tip").textContent = mode === "mic" ? "マイクに向かって、ふーっと細く長く" : "画面を長押し。上にずらすほど強く吹く";
+}
+
+function update(dt) {
+  const s = readStrength(dt);
+  if (state !== "blow") return;
+  t += dt;
+  const b = band();
+  if (s > 0.08) { started = true; quiet = 0; } else if (started) quiet += dt;
+  let g = 0;
+  if (s >= b.lo && s <= b.hi) {
+    g = 0.62 * (1 - Math.abs(s - b.c) / b.w * 0.45);
+    strain = Math.max(0, strain - dt * 0.8);
+  } else if (s > b.hi) {
+    g = 0.75;
+    strain += dt * (s - b.hi) * 9;
+  } else if (s > 0.08) {
+    g = 0.08 * s / b.lo;
+    strain = Math.max(0, strain - dt * 0.8);
+  }
+  const before = Math.log(r);
+  r *= Math.exp(g * dt);
+  peakR = Math.max(peakR, r);
+  // the film thins as it stretches, and drains/evaporates with time
+  film -= (Math.log(r) - before) * 0.058 + dt * (started ? 0.018 : 0.004);
+  if (strain >= 1) return pop("強く吹きすぎて割れた");
+  if (film <= 0) return pop("膜がうすくなりすぎて割れた");
+  if (started && quiet > 0.7) { state = "fly"; endT = performance.now(); $("tip").hidden = true; setTimeout(finish, 2200); }
+}
+function pop(why) {
+  state = "pop"; popMsg = why; $("tip").hidden = true;
+  for (let i = 0; i < 40; i++) { const a = Math.random() * Math.PI * 2; shards.push({ a, d: 1, v: 0.6 + Math.random() * 0.9, life: 1 }); }
+  setTimeout(finish, 1400);
+}
+
+// ---------- result ----------
+function finish() {
+  state = "result";
+  const d = r * 2, popped = !!popMsg;
+  const { past, next } = compare(d);
+  $("rMode").textContent = (mode === "mic" ? "マイクで吹いた" : "指で吹いた") + (popped ? "・割れてしまった" : "・空へ飛んでいった");
+  $("rSize").textContent = (popped ? "記録なし" : "直径 " + fmtLen(d));
+  $("rCmp").textContent = popped ? "直径 " + fmtLen(d) + " で " + popMsg : past ? past[1] + "より大きい" + (next ? "（次は" + next[1] + "）" : "") : "まだ小さい";
+  $("rNote").textContent = popped ? "黒っぽい膜は割れる寸前の合図。その前に吹くのをやめると、空へ飛ばせる。" : "吹くのをやめたので、玉は空へ。";
+  let best = 0; const key = "shabon.best." + mode;
+  try { best = +localStorage.getItem(key) || 0; if (!popped && d > best) localStorage.setItem(key, d); } catch (e) {}
+  $("rBest").textContent = !popped && d > best ? (best ? "自己ベスト更新（前回 " + fmtLen(best) + "）" : "") : best ? "自己ベスト 直径 " + fmtLen(best) : "";
+  $("share").onclick = () => {
+    const how = mode === "mic" ? "息で" : "指で";
+    const text = popped
+      ? "ふーっと、しゃぼん｜" + how + "直径 " + fmtLen(d) + " までふくらませたけど、" + popMsg.replace("割れた", "割れた…")
+      : "ふーっと、しゃぼん｜" + how + "ふくらませたシャボン玉、直径 " + fmtLen(d) + (past ? "（" + past[1] + "超え）" : "") + "で空へ";
+    open("https://x.com/intent/post?text=" + encodeURIComponent(text + "\n#ふーっとしゃぼん") + "&url=" + encodeURIComponent(location.href.split("#")[0]), "_blank", "noopener");
+  };
+  $("result").hidden = false; $("sizeBox").hidden = true;
+}
+
+// ---------- drawing ----------
+function draw(now) {
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#9fd0f2"); sky.addColorStop(1, "#dff0fb");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  // camera: keep the bubble around 30% of the short side, centred
+  const want = Math.min(W, H) * 0.3 / Math.max(r, START_R);
+  if (state === "blow" || state === "ready") camScale = lerp(camScale, want, 0.08);
+  const sc = camScale, R = r * sc;
+  const cx = W * 0.42;
+  let by = H * 0.5;
+  if (state === "fly") { flyY += (performance.now() - endT) * 0.00004 * H; by -= flyY; }
+  // the wand ring is held 1 m above the ground; the bubble hangs on top of it
+  const ringY = H * 0.5 + R;
+  const groundY = ringY + 1.0 * sc;
+  const base = Math.min(groundY, ringY);
+
+  // comparison silhouettes to the right, at real scale
+  const d = r * 2;
+  const near = LADDER.filter((l) => l[0] * sc > 12 && l[0] * sc < H * 0.42).slice(-3);
+  let x = cx + R + 28;
+  ctx.textAlign = "center";
+  near.forEach((l) => {
+    const h = l[0] * sc, round = /玉|ボール|みかん/.test(l[1]);
+    const w = round ? h : Math.max(10, Math.min(h * 0.55, W * 0.16));
+    if (x + w > W - 76) return;
+    ctx.fillStyle = "#6a8aa3";
+    drawThing(l[1], x + w / 2, groundY < H ? groundY : base, w, h);
+    ctx.fillStyle = "#17324a"; ctx.font = "700 13px sans-serif";
+    ctx.fillText(l[1], x + w / 2, Math.max(16, (groundY < H ? groundY : base) - h - 6));
+    x += w + 18;
+  });
+  // ground, once the camera is far enough out to see it
+  if (groundY < H) {
+    ctx.fillStyle = "#7cb26a"; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = "#6a9d59"; ctx.fillRect(0, groundY, W, 4);
+  }
+  // wand
+  const ringR = Math.max(1.5, START_R * 1.1 * sc);
+  if (ringR > 2) {
+    ctx.strokeStyle = "#e0566b"; ctx.lineWidth = Math.max(1.5, ringR * 0.18);
+    ctx.beginPath(); ctx.moveTo(cx, ringY + ringR * 0.35); ctx.lineTo(cx, ringY + Math.min(0.25 * sc, H)); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, ringY, ringR, ringR * 0.35, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  // bubble
+  if (state === "ready" || state === "blow" || state === "fly") drawBubble(cx, by, r * sc, now);
+  if (state === "pop") {
+    ctx.fillStyle = "#ffffff";
+    shards.forEach((p) => { p.d += p.v * 0.03; p.life -= 0.02; if (p.life > 0) { ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(cx + Math.cos(p.a) * r * sc * p.d, by + Math.sin(p.a) * r * sc * p.d, 2.5, 0, Math.PI * 2); ctx.fill(); } });
+    ctx.globalAlpha = 1;
+  }
+  // breath meter
+  if (state === "blow") drawMeter();
+  // size readout
+  if (state === "blow" || state === "fly") {
+    $("sizeNum").textContent = "直径 " + fmtLen(d);
+    const { past } = compare(d);
+    $("sizeCmp").textContent = past ? past[1] + "超え" : "";
+  }
+}
+function drawThing(name, x, gy, w, h) {
+  // simple flat silhouettes; enough to read the scale
+  if (/大人|子ども/.test(name)) {
+    ctx.beginPath(); ctx.arc(x, gy - h + w * 0.25, w * 0.25, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x - w * 0.28, gy - h + w * 0.5, w * 0.56, h - w * 0.5);
+  } else if (/タワー|ツリー|ハリファ/.test(name)) {
+    ctx.beginPath(); ctx.moveTo(x - w * 0.5, gy); ctx.lineTo(x - w * 0.06, gy - h); ctx.lineTo(x + w * 0.06, gy - h); ctx.lineTo(x + w * 0.5, gy); ctx.fill();
+  } else if (/富士山|エベレスト/.test(name)) {
+    ctx.beginPath(); ctx.moveTo(x - w * 1.6, gy); ctx.lineTo(x - w * 0.15, gy - h); ctx.lineTo(x + w * 0.15, gy - h); ctx.lineTo(x + w * 1.6, gy); ctx.fill();
+  } else if (/玉|ボール|みかん/.test(name)) {
+    ctx.beginPath(); ctx.arc(x, gy - h / 2, h / 2, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.fillRect(x - w / 2, gy - h * 0.55, w, h * 0.55); // vehicles, pools, fields: lie long and low
+  }
+}
+function drawBubble(x, y, R, now) {
+  const filmNm = 40 + film * 1100;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.clip();
+  // horizontal colour bands: the top drains first, so it is thinner
+  const n = 24;
+  for (let i = 0; i < n; i++) {
+    const f = i / (n - 1);
+    const dnm = filmNm * (0.55 + 0.45 * f) + Math.sin(now / 600 + f * 9) * 12;
+    const [cr, cg, cb] = filmColor(dnm);
+    ctx.fillStyle = "rgba(" + cr + "," + cg + "," + cb + ",0.42)";
+    ctx.fillRect(x - R, y - R + f * 2 * R - 1, 2 * R, 2 * R / n + 2);
+  }
+  ctx.restore();
+  const [er, eg, eb] = filmColor(filmNm * 0.8);
+  ctx.strokeStyle = "rgb(" + er + "," + eg + "," + eb + ")";
+  ctx.lineWidth = Math.max(2, R * 0.04);
+  ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.stroke();
+  // highlight
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.ellipse(x - R * 0.42, y - R * 0.45, R * 0.16, R * 0.08, -0.7, 0, Math.PI * 2); ctx.fill();
+  // strain wobble warning
+  if (strain > 0.35) {
+    ctx.strokeStyle = "#e0566b"; ctx.lineWidth = 2;
+    ctx.beginPath(); for (let a = 0; a <= Math.PI * 2 + 0.01; a += 0.1) { const rr = R * (1.04 + 0.03 * strain * Math.sin(a * 9 + now / 40)); a === 0 ? ctx.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) : ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } ctx.stroke();
+  }
+}
+function drawMeter() {
+  const b = band();
+  const mx = W - 34, top = H * 0.2, h = H * 0.5, w = 16;
+  const yOf = (v) => top + h - clamp(v / 1.3, 0, 1) * h;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(mx, top, w, h);
+  ctx.fillStyle = "#7cc68a"; ctx.fillRect(mx, yOf(b.hi), w, yOf(b.lo) - yOf(b.hi));
+  ctx.fillStyle = "#e0566b"; ctx.fillRect(mx, top, w, yOf(b.hi) - top);
+  ctx.strokeStyle = "#17324a"; ctx.lineWidth = 2; ctx.strokeRect(mx, top, w, h);
+  const sy = yOf(strength);
+  ctx.fillStyle = "#17324a"; ctx.beginPath(); ctx.moveTo(mx - 4, sy); ctx.lineTo(mx - 16, sy - 7); ctx.lineTo(mx - 16, sy + 7); ctx.fill();
+  ctx.font = "700 12px sans-serif"; ctx.textAlign = "center"; ctx.fillText("息", mx + w / 2, top - 8);
+  // film thickness bar
+  const fx = W - 62;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(fx, top, 10, h);
+  const [cr, cg, cb] = filmColor(40 + film * 1100);
+  ctx.fillStyle = film < 0.15 ? "#222" : "rgb(" + cr + "," + cg + "," + cb + ")";
+  ctx.fillRect(fx, top + h * (1 - clamp(film, 0, 1)), 10, h * clamp(film, 0, 1));
+  ctx.strokeRect(fx, top, 10, h);
+  ctx.fillText("膜", fx + 5, top - 8);
+}
+
+let last = 0;
+function loop(now) { const dt = Math.min(0.05, (now - (last || now)) / 1000); last = now; update(dt); draw(now); requestAnimationFrame(loop); }
+
+// ---------- screens ----------
+function showReady() {
+  state = "ready"; reset();
+  $("intro").hidden = true; $("result").hidden = true; $("ready").hidden = false;
+  $("sensBox").hidden = mode !== "mic";
+  $("readyText").innerHTML = mode === "mic"
+    ? "右の<b>緑の帯</b>に息の強さを合わせる。赤は強すぎ。<br>吹くのをやめると玉が飛んでいく。"
+    : "画面を長押しすると吹く。指を<b>上にずらすほど強い</b>。<br>右の<b>緑の帯</b>に合わせて、指をはなすと玉が飛んでいく。";
+}
+$("useMic").addEventListener("click", async () => {
+  try { await enableMic(); mode = "mic"; showReady(); }
+  catch (e) { mode = "touch"; showReady(); $("readyTitle").textContent = "マイクが使えなかったので、指で吹きます"; }
+});
+$("useTouch").addEventListener("click", () => { mode = "touch"; showReady(); });
+$("go").addEventListener("click", startBlow);
+$("again").addEventListener("click", showReady);
+document.querySelectorAll("#sensBox button").forEach((b) => b.addEventListener("click", () => {
+  sensIdx = +b.dataset.s; document.querySelectorAll("#sensBox button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+}));
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
